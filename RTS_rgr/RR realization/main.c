@@ -1,30 +1,58 @@
-#include<stdio.h>
-#include<stdlib.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define QUANTUM 0.05
+
 
 
 typedef struct queue{
     struct node* head;
     int length;
+    int lastID;
+    int processed;
+    long double waitTimeSum;
 } Queue;
 
 typedef struct node {
     int priority;
-    int burstTime;
-    int timeLeft;
+    float burstTime;
+    float timeLeft;
+    float deadline;
+    int id;
+    long double avgWaitTimeOnAppend;
     struct node* next;
     struct node* prev;
 } Node;
 
-Node* push(Queue* queue, int priority, int burstTime){
+long double getWaitTime (Node* node) {
+    long double res = 0;
+    while (node != NULL){
+        res += node->timeLeft;
+        node = node->prev;
+        if (node == NULL) return res;
+    }
+    return res;
+}
+
+Node* push(Queue* queue, int priority, float burstTime, float deadline){
     if(queue->head == NULL){
+
         Node* newNode = (Node*)malloc(sizeof(Node));
         newNode->burstTime = burstTime;
         newNode->timeLeft = burstTime;
+        newNode->deadline = deadline;
         newNode->priority = priority;
         newNode->next = NULL;
         newNode->prev = NULL;
+        newNode->id = 1;
+        newNode->avgWaitTimeOnAppend = 0;
+
         queue->head = newNode;
         queue->length = 1;
+        queue->lastID = 1;
+        queue->waitTimeSum = 0;
+        queue->processed = 0;
+
         return newNode;
     }
     Node *node = queue->head;
@@ -34,8 +62,14 @@ Node* push(Queue* queue, int priority, int burstTime){
         } else {
             Node* newNode = (Node*)malloc(sizeof(Node));
             newNode->burstTime = burstTime;
+            newNode->deadline = deadline;
             newNode->priority = priority;
             newNode->timeLeft = burstTime;
+            newNode->id = queue->lastID + 1;
+
+            queue->lastID = queue->lastID + 1;
+            queue->waitTimeSum += burstTime;
+
             if (node->prev == NULL && node->priority > priority) {
                 newNode->next = node;
                 node->prev = newNode;
@@ -47,11 +81,19 @@ Node* push(Queue* queue, int priority, int burstTime){
                 newNode->next = NULL;
             } else {
                 Node* prevNode = node->prev;
+                if (prevNode == NULL) {
+                    prevNode = (Node*) malloc(sizeof(Node));
+                    prevNode->burstTime = burstTime;
+                    prevNode->priority = priority;
+                    prevNode->deadline = deadline;
+                    prevNode->prev = NULL;
+                }
                 node->prev = newNode;
                 newNode->next = node;
                 newNode->prev = prevNode;
                 prevNode->next = newNode;
             }
+            newNode->avgWaitTimeOnAppend = getWaitTime(node) / queue->lastID;
 
             queue->length++;
             return newNode;
@@ -90,14 +132,19 @@ Node* pop (Queue* queue,Node* node) {
     return node;
 }
 
-void roundRobin(Queue *queue, int quantum) {
+void roundRobin(Queue *queue, float quantum, FILE* file) {
+    int counterTask = 0;
+    float counterTime = 0;
+
     Node *node = queue->head;
     while (queue->length != 0) {
+        counterTime++;
         node->timeLeft = node->timeLeft - quantum;
-        printf("Executed node with burstTime %d and priority: %d \n", node->burstTime, node->priority);
         if(node->timeLeft <= 0) {
-            int round = ((node->burstTime % quantum) != 0) ? (node->burstTime / quantum)+1 : (node->burstTime / quantum);
-            printf("\tNode with burstTime - %d and priority - %d, done after - %d rounds \n", node->burstTime, node->priority, round);
+            printf("\tTask with ID - %d and burstTime - %f and priority - %d and deadline - %f was done after %f\n", node->id ,node->burstTime, node->priority, node->deadline, counterTime*quantum); //, round);
+            if (node->deadline < counterTime*quantum) {
+                counterTask++;
+             }
             Node* poppedNode = pop(queue, node);
             if (queue->length == 0) return;
             node = poppedNode->next == NULL ? queue->head : poppedNode->next;
@@ -106,22 +153,60 @@ void roundRobin(Queue *queue, int quantum) {
         } else {
             node = node->next == NULL ? queue->head : node->next;
         }
-        printf("\n");
+        if (queue->length <= 1 ) {
+            printf("Task was expired - %d\n", counterTask);
+        }
+
+
     }
 
+}
+
+const char* getfield(char* line, int num)
+{
+    const char* tok;
+    for (tok = strtok(line, ",");
+         tok && *tok;
+         tok = strtok(NULL, ",\n"))
+    {
+        if (!--num)
+            return tok;
+    }
+    return NULL;
+}
+
+void getTasks(char* fileName, struct node *nodes) {
+    FILE* stream = fopen(fileName, "r");
+    int BURST_TIME = 3;
+    int PRIORITY = 5;
+    int DEADLINE = 4;
+    char line[200];
+    int counter = 0;
+    fgets(line, 200, stream);
+    while (fgets(line, 200, stream))
+    {
+        char* tmp = strdup(line);
+        char* tmp1 = strdup(line);
+        char* tmp2 = strdup(line);
+        const char *burstTime = getfield(tmp, BURST_TIME);
+        const char *priority = getfield(tmp1, PRIORITY);
+        const char *deadline = getfield(tmp2, DEADLINE);
+        nodes[counter].priority = atoi(priority);
+        nodes[counter].burstTime = atof(burstTime);
+        nodes[counter].deadline = atof(deadline);
+        free(tmp);
+        counter++;
+    }
 }
 
 int main()
 {
     Queue queue = {NULL};
-    push(&queue, 1,1);
-    push(&queue, 28,4);
-    push(&queue, 13,2);
-    push(&queue, 31,6);
-    push(&queue, 7,8);
-    push(&queue, 21,9);
-    push(&queue, 9,3);
-    push(&queue, 2,7);
+    struct node nodes[2000];
+    getTasks("tasks.csv", nodes);
+    for (int i = 0; i < 1001; ++i) {
+        push(&queue, nodes[i].priority, nodes[i].burstTime, nodes[i].deadline);
+    }
+    roundRobin(&queue, QUANTUM, NULL);
 
-    roundRobin(&queue, 3);
 }
